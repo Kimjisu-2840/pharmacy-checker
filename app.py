@@ -8,7 +8,36 @@ from core.scanner import parse_gs1_details
 from core.report import generate_pdf_from_view_df
 
 st.set_page_config(page_title="의약품 검수 시스템", page_icon="💊", layout="wide")
-
+# ---------------------------------------------------------
+# 화면 좌하단 보안 문구 및 제작자 서명 고정 (CSS/HTML)
+# ---------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    .footer-left-signature {
+        position: fixed;
+        bottom: 12px;
+        left: 20px;
+        z-index: 9999;
+        font-family: 'Pretendard', 'Arial', sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        color: #C53030; /* 보안 경고용 딥 레드 톤 */
+        background-color: rgba(255, 255, 255, 0.92);
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid #FEB2B2;
+        box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.08);
+        line-height: 1.4;
+    }
+    </style>
+    <div class="footer-left-signature">
+        🚫 경동팜 전용 프로그램 외부 유출 금지<br>
+        ✨ Made By JISU.K
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 # 세션 상태 초기화
 if "master_db" not in st.session_state: st.session_state.master_db = {}
 if "order_df" not in st.session_state: st.session_state.order_df = None

@@ -9,29 +9,32 @@ from core.report import generate_pdf_from_view_df
 
 st.set_page_config(page_title="의약품 검수 시스템", page_icon="💊", layout="wide")
 # ---------------------------------------------------------
-# 화면 좌하단 보안 문구 및 제작자 서명 고정 (CSS/HTML)
+# 화면 중앙 하단 보안 문구 및 제작자 서명 고정 (CSS/HTML)
 # ---------------------------------------------------------
 st.markdown(
     """
     <style>
-    .footer-left-signature {
+    .footer-center-signature {
         position: fixed;
         bottom: 12px;
-        left: 20px;
+        left: 50%;
+        transform: translateX(-50%);
         z-index: 9999;
         font-family: 'Pretendard', 'Arial', sans-serif;
         font-size: 12px;
         font-weight: bold;
         color: #C53030; /* 보안 경고용 딥 레드 톤 */
         background-color: rgba(255, 255, 255, 0.92);
-        padding: 8px 14px;
-        border-radius: 8px;
+        padding: 8px 18px;
+        border-radius: 20px;
         border: 1px solid #FEB2B2;
-        box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.08);
+        box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.1);
+        text-align: center; /* 2줄 문구 중앙 정렬 */
         line-height: 1.4;
+        white-space: nowrap; /* 문구 줄바꿈 방지 */
     }
     </style>
-    <div class="footer-left-signature">
+    <div class="footer-center-signature">
         🚫 경동팜 전용 프로그램 외부 유출 금지<br>
         ✨ Made By JISU.K
     </div>

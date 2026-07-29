@@ -54,20 +54,23 @@ if "scanned_serials" not in st.session_state: st.session_state.scanned_serials =
 with st.sidebar:
     st.header("📁 데이터 설정")
     
-    # 사내 마스터 파일 로드
+    # 1차 사내 마스터 파일 로드
     master_file = st.file_uploader("1. 사내 마스터 엑셀", type=["xlsx", "xls"])
     if master_file and not st.session_state.master_db:
-        df_m = pd.read_excel(master_file, usecols="A,C,H,L,Q,AS", dtype={'A': str, 'Q': str})
-        df_m.columns = ["제품코드", "제품전산출력명", "제품규격", "매입처이름", "표준코드", "제약사명"]
-        df_m = df_m.dropna(subset=["표준코드"])
-        df_m["표준코드"] = df_m["표준코드"].astype(str).str.replace('.0', '', regex=False).str.strip().str.zfill(14)
-        st.session_state.master_db = df_m.drop_duplicates(subset=["표준코드"]).set_index("표준코드").to_dict('index')
-        st.success("마스터 DB 완료")
+        try:
+            df_m = pd.read_excel(master_file, usecols="A,C,H,L,Q,AS", dtype={'A': str, 'Q': str})
+            df_m.columns = ["제품코드", "제품전산출력명", "제품규격", "매입처이름", "표준코드", "제약사명"]
+            df_m = df_m.dropna(subset=["표준코드"])
+            df_m["표준코드"] = df_m["표준코드"].astype(str).str.replace('.0', '', regex=False).str.strip().str.zfill(14)
+            st.session_state.master_db = df_m.drop_duplicates(subset=["표준코드"]).set_index("표준코드").to_dict('index')
+            st.success("마스터 DB 완료")
+        except Exception as e:
+            st.error(f"마스터 로드 실패: {e}")
 
-    # 제약사 선택
+    # 2차 제약사 선택
     provider = st.selectbox("2. 제약사/도매처 선택", ["지오영", "추가예정..."])
     
-    # 명세서 파일 로드
+    # 3차 명세서 파일 로드
     order_file = st.file_uploader("3. 명세서 엑셀", type=["xlsx", "xls"])
     
     if order_file and st.session_state.master_db and st.session_state.order_df is None:
@@ -95,9 +98,14 @@ with st.sidebar:
                     is_registered = False
 
                 list_data.append({
-                    "No": idx + 1, "제품코드": prod_code, "제품전산출력명": prod_name,
-                    "제품규격": prod_spec, "수량": qty, "스캔수량": 0,
-                    "표준코드": std_code, "등록여부": is_registered
+                    "No": idx + 1,
+                    "제품코드": prod_code,
+                    "제품전산출력명": prod_name,
+                    "제품규격": prod_spec,
+                    "수량": qty,
+                    "스캔수량": 0,
+                    "표준코드": std_code,
+                    "등록여부": is_registered
                 })
 
             st.session_state.order_df = pd.DataFrame(list_data)
@@ -106,7 +114,7 @@ with st.sidebar:
         except Exception as e:
             st.error(f"명세서 로드 실패: {e}")
 
-    # 리포트 다운로드
+    # 보고서 다운로드
     if st.session_state.order_df is not None:
         st.markdown("---")
         st.subheader("📄 보고서 출력")
@@ -123,15 +131,14 @@ if st.session_state.master_db and st.session_state.order_df is not None:
     col_left, col_right = st.columns([1, 1.2])
 
     with col_left:
+        # 1. 실시간 바코드 스캔 영역
         st.subheader("🔍 실시간 바코드 스캔")
         with st.form(key="scan_form", clear_on_submit=True):
             barcode_input = st.text_input("약품 바코드를 스캔하세요:", key="barcode")
             submit_button = st.form_submit_button(label="스캔")
 
         if submit_button and barcode_input:
-            # ★ 1. 스캐너 모듈을 통해 일반약 여부(is_otc) 판별
             std_code, raw_barcode, is_otc = parse_gs1_details(barcode_input)
-            
             target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == std_code].tolist()
             
             if not target_idx:
@@ -141,33 +148,68 @@ if st.session_state.master_db and st.session_state.order_df is not None:
                 idx = target_idx[0]
                 drug_name = st.session_state.order_df.loc[idx, "제품전산출력명"]
                 
-                # ★ 2. 분기 처리: 일반약(OTC) vs 전문약(RX)
                 if is_otc:
-                    # 일반약: 중복 검사 패스하고 즉시 수량 증가
                     st.session_state.order_df.loc[idx, "스캔수량"] += 1
                     msg = f"✅ [일반약 스캔] {drug_name} (+1)"
                     st.session_state.logs.insert(0, ("success", msg))
                 else:
-                    # 전문약: 원본 바코드 전체를 이용한 강력한 중복 차단
                     if raw_barcode in st.session_state.scanned_serials:
                         msg = f"🚨 [중복 차단] 이미 검수된 박스입니다!\\n   - {drug_name}"
                         st.session_state.logs.insert(0, ("error", msg))
                     else:
-                        st.session_state.scanned_serials.add(raw_barcode) # 셋에 원본 바코드 통째로 저장
+                        st.session_state.scanned_serials.add(raw_barcode)
                         st.session_state.order_df.loc[idx, "스캔수량"] += 1
                         msg = f"🟢 [전문약 스캔] {drug_name} (S/N 확인완료)"
                         st.session_state.logs.insert(0, ("info", msg))
-                
                 st.rerun()
 
-        # 최근 로그 10개 표시
+        st.markdown("---")
+
+        # 2. 📦 대용량/수기 수량 조절 패널
+        st.subheader("📦 대용량 번들 / 수기 수량 조절")
+        with st.expander("👉 클릭하여 대량 수량 수기 증감하기", expanded=True):
+            # 품목 선택 드롭다운 (No + 제품명)
+            item_options = {
+                f"[{row['No']}] {row['제품전산출력명']} (현재: {row['스캔수량']}/{row['수량']}개)": row['표준코드']
+                for _, row in st.session_state.order_df.iterrows()
+            }
+            selected_label = st.selectbox("조절할 약품을 선택하세요:", list(item_options.keys()))
+            selected_code = item_options[selected_label]
+            
+            m_col1, m_col2 = st.columns([1.5, 1])
+            with m_col1:
+                adjust_qty = st.number_input("증감할 수량 입력 (+ 또는 -):", value=10, step=1)
+            with m_col2:
+                st.write("") # 간격 맞춤용
+                st.write("")
+                apply_btn = st.button("수량 반영", use_container_width=True)
+
+            if apply_btn:
+                target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == selected_code].tolist()[0]
+                current_qty = st.session_state.order_df.loc[target_idx, "스캔수량"]
+                new_qty = current_qty + adjust_qty
+                
+                if new_qty < 0:
+                    st.error("❌ 스캔 수량은 0개 미만이 될 수 없습니다.")
+                else:
+                    st.session_state.order_df.loc[target_idx, "스캔수량"] = new_qty
+                    drug_name = st.session_state.order_df.loc[target_idx, "제품전산출력명"]
+                    sign = f"+{adjust_qty}" if adjust_qty > 0 else str(adjust_qty)
+                    msg = f"📝 [수기 조절] {drug_name} ({sign}개 조절 ➔ 현재 {new_qty}개)"
+                    st.session_state.logs.insert(0, ("info", msg))
+                    st.rerun()
+
+        st.markdown("---")
+
+        # 3. 실시간 로그 표시 (최근 10개)
+        st.subheader("📋 실시간 스캔 및 수기 로그")
         for log_type, log_msg in st.session_state.logs[:10]:
             if log_type == "error": st.error(log_msg)
             elif log_type == "success": st.success(log_msg)
             else: st.info(log_msg)
 
     with col_right:
-        st.subheader("📋 대시보드")
+        st.subheader("📋 [실시간] 입고 검수 대시보드")
         view_df = st.session_state.order_df[["No", "제품코드", "제품전산출력명", "제품규격", "수량", "스캔수량", "등록여부"]].copy()
 
         def highlight_status(row):
@@ -183,6 +225,7 @@ if st.session_state.master_db and st.session_state.order_df is not None:
             return [''] * len(row)
 
         styled_df = view_df.style.apply(highlight_status, axis=1).hide(subset=["등록여부"], axis=1)
-        st.dataframe(styled_df, use_container_width=True, height=600)
+        st.dataframe(styled_df, use_container_width=True, height=650)
+
 else:
-    st.info("👈 좌측 사이드바에서 파일을 순서대로 업로드해주세요.")
+    st.info("👈 좌측 사이드바에서 사내 마스터 파일과 명세서 파일을 업로드해주세요.")

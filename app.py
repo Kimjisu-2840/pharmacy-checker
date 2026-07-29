@@ -165,7 +165,7 @@ if st.session_state.master_db and st.session_state.order_df is not None:
 
         st.markdown("---")
 
-        # 2. 📦 대용량/수기 수량 조절 패널
+        # 2. 📦 대용량/수기 수량 조절 패널 (Enter 키 입력 지원)
         st.subheader("📦 대용량 번들 / 수기 수량 조절")
         with st.expander("👉 클릭하여 대량 수량 수기 증감하기", expanded=True):
             # 품목 선택 드롭다운 (No + 제품명)
@@ -176,28 +176,30 @@ if st.session_state.master_db and st.session_state.order_df is not None:
             selected_label = st.selectbox("조절할 약품을 선택하세요:", list(item_options.keys()))
             selected_code = item_options[selected_label]
             
-            m_col1, m_col2 = st.columns([1.5, 1])
-            with m_col1:
-                adjust_qty = st.number_input("증감할 수량 입력 (+ 또는 -):", value=10, step=1)
-            with m_col2:
-                st.write("") # 간격 맞춤용
-                st.write("")
-                apply_btn = st.button("수량 반영", use_container_width=True)
+            # Form 구조로 변환하여 숫자 입력 후 Enter 키를 누르면 바로 수량이 업데이트되도록 적용
+            with st.form(key="manual_adjust_form", clear_on_submit=False):
+                m_col1, m_col2 = st.columns([1.5, 1])
+                with m_col1:
+                    adjust_qty = st.number_input("증감할 수량 입력 후 Enter:", value=10, step=1)
+                with m_col2:
+                    st.write("") # 간격 맞춤용
+                    st.write("")
+                    apply_btn = st.form_submit_button("수량 반영", use_container_width=True)
 
-            if apply_btn:
-                target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == selected_code].tolist()[0]
-                current_qty = st.session_state.order_df.loc[target_idx, "스캔수량"]
-                new_qty = current_qty + adjust_qty
-                
-                if new_qty < 0:
-                    st.error("❌ 스캔 수량은 0개 미만이 될 수 없습니다.")
-                else:
-                    st.session_state.order_df.loc[target_idx, "스캔수량"] = new_qty
-                    drug_name = st.session_state.order_df.loc[target_idx, "제품전산출력명"]
-                    sign = f"+{adjust_qty}" if adjust_qty > 0 else str(adjust_qty)
-                    msg = f"📝 [수기 조절] {drug_name} ({sign}개 조절 ➔ 현재 {new_qty}개)"
-                    st.session_state.logs.insert(0, ("info", msg))
-                    st.rerun()
+                if apply_btn:
+                    target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == selected_code].tolist()[0]
+                    current_qty = st.session_state.order_df.loc[target_idx, "스캔수량"]
+                    new_qty = current_qty + adjust_qty
+                    
+                    if new_qty < 0:
+                        st.error("❌ 스캔 수량은 0개 미만이 될 수 없습니다.")
+                    else:
+                        st.session_state.order_df.loc[target_idx, "스캔수량"] = new_qty
+                        drug_name = st.session_state.order_df.loc[target_idx, "제품전산출력명"]
+                        sign = f"+{adjust_qty}" if adjust_qty > 0 else str(adjust_qty)
+                        msg = f"📝 [수기 조절] {drug_name} ({sign}개 조절 ➔ 현재 {new_qty}개)"
+                        st.session_state.logs.insert(0, ("info", msg))
+                        st.rerun()
 
         st.markdown("---")
 

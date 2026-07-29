@@ -184,7 +184,7 @@ with tab_main:
             with st.expander("검수 결과 엑셀 저장 및 다운로드", expanded=True):
                 excel_bytes = generate_excel_from_view_df(st.session_state.order_df, today_str, provider)
                 # 파일명에 시분초를 추가하여 같은 날 여러번 저장해도 덮어써지지 않게 방지
-                now_time = datetime.datetime.now().strftime("%시%분%초")
+                now_time = datetime.datetime.now().strftime("%H%M%S")
                 filename = f"{today_str}_{provider}_검수결과_{now_time}.xlsx"
 
                 c_btn1, c_btn2 = st.columns(2)

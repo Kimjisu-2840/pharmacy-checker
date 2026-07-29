@@ -3,13 +3,17 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import os
 
 # 모듈 임포트
 from parsers.geo_young import GeoYoungParser
 from core.scanner import parse_gs1_details
-from core.report import generate_pdf_from_view_df
+from core.report import generate_excel_from_view_df  # 엑셀 엔진 로드
 
 st.set_page_config(page_title="의약품 검수 시스템", page_icon="💊", layout="wide")
+
+# history 폴더 생성 (과거 내역 저장용)
+os.makedirs("history", exist_ok=True)
 
 # ---------------------------------------------------------
 # 화면 중앙 하단 보안 문구 및 제작자 서명 고정 (CSS/HTML)
@@ -51,27 +55,21 @@ if "order_df" not in st.session_state: st.session_state.order_df = None
 if "logs" not in st.session_state: st.session_state.logs = []
 if "scanned_serials" not in st.session_state: st.session_state.scanned_serials = set()
 
-with st.sidebar:
-    st.header("📁 데이터 설정")
-    
-    # 1차 사내 마스터 파일 로드
-    master_file = st.file_uploader("1. 사내 마스터 엑셀", type=["xlsx", "xls"])
-    if master_file and not st.session_state.master_db:
-        try:
-            df_m = pd.read_excel(master_file, usecols="A,C,H,L,Q,AS", dtype={'A': str, 'Q': str})
-            df_m.columns = ["제품코드", "제품전산출력명", "제품규격", "매입처이름", "표준코드", "제약사명"]
-            df_m = df_m.dropna(subset=["표준코드"])
-            df_m["표준코드"] = df_m["표준코드"].astype(str).str.replace('.0', '', regex=False).str.strip().str.zfill(14)
-            st.session_state.master_db = df_m.drop_duplicates(subset=["표준코드"]).set_index("표준코드").to_dict('index')
-            st.success("마스터 DB 완료")
-        except Exception as e:
-            st.error(f"마스터 로드 실패: {e}")
+# 백그라운드 마스터 데이터 자동 로드 (data/master_data.xlsx)
+if not st.session_state.master_db:
+    try:
+        df_m = pd.read_excel("data/master_data.xlsx", usecols="A,C,H,L,Q,AS", dtype={'A': str, 'Q': str})
+        df_m.columns = ["제품코드", "제품전산출력명", "제품규격", "매입처이름", "표준코드", "제약사명"]
+        df_m = df_m.dropna(subset=["표준코드"])
+        df_m["표준코드"] = df_m["표준코드"].astype(str).str.replace('.0', '', regex=False).str.strip().str.zfill(14)
+        st.session_state.master_db = df_m.drop_duplicates(subset=["표준코드"]).set_index("표준코드").to_dict('index')
+    except Exception as e:
+        st.sidebar.error("⚠️ data/master_data.xlsx 파일을 찾을 수 없습니다.")
 
-    # 2차 제약사 선택
-    provider = st.selectbox("2. 제약사/도매처 선택", ["지오영", "추가예정..."])
-    
-    # 3차 명세서 파일 로드
-    order_file = st.file_uploader("3. 명세서 엑셀", type=["xlsx", "xls"])
+with st.sidebar:
+    st.header("📁 업무 설정")
+    provider = st.selectbox("1. 제약사/도매처 선택", ["지오영", "추가예정..."])
+    order_file = st.file_uploader("2. 명세서 엑셀 업로드", type=["xlsx", "xls"])
     
     if order_file and st.session_state.master_db and st.session_state.order_df is None:
         try:
@@ -98,14 +96,8 @@ with st.sidebar:
                     is_registered = False
 
                 list_data.append({
-                    "No": idx + 1,
-                    "제품코드": prod_code,
-                    "제품전산출력명": prod_name,
-                    "제품규격": prod_spec,
-                    "수량": qty,
-                    "스캔수량": 0,
-                    "표준코드": std_code,
-                    "등록여부": is_registered
+                    "No": idx + 1, "제품코드": prod_code, "제품전산출력명": prod_name,
+                    "제품규격": prod_spec, "수량": qty, "스캔수량": 0, "표준코드": std_code, "등록여부": is_registered
                 })
 
             st.session_state.order_df = pd.DataFrame(list_data)
@@ -114,120 +106,149 @@ with st.sidebar:
         except Exception as e:
             st.error(f"명세서 로드 실패: {e}")
 
-    # 보고서 다운로드
-    if st.session_state.order_df is not None:
-        st.markdown("---")
-        st.subheader("📄 보고서 출력")
+# ==========================================
+# 탭(Tab) UI 구성
+# ==========================================
+tab_main, tab_history = st.tabs(["🔍 실시간 입고 검수", "📁 과거 검수 엑셀 이력"])
+
+# ----------------- 탭 1: 메인 검수 화면 -----------------
+with tab_main:
+    if st.session_state.master_db and st.session_state.order_df is not None:
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        pdf_data = generate_pdf_from_view_df(st.session_state.order_df, today_str, provider)
-        st.download_button("📥 PDF 다운로드", data=pdf_data, file_name=f"{today_str}_{provider}_입고검수.pdf", mime="application/pdf")
+        st.header(f"📊 [{today_str}] {provider} 입고 검수 현황")
+        st.markdown("---")
 
-# 메인 화면
-if st.session_state.master_db and st.session_state.order_df is not None:
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    st.header(f"📊 [{today_str}] {provider} 입고 검수 현황")
-    st.markdown("---")
+        col_left, col_right = st.columns([1, 1.2])
 
-    col_left, col_right = st.columns([1, 1.2])
+        with col_left:
+            # 1. 스캔 영역
+            st.subheader("🔍 바코드 스캔")
+            with st.form(key="scan_form", clear_on_submit=True):
+                barcode_input = st.text_input("약품 바코드를 스캔하세요:", key="barcode")
+                submit_button = st.form_submit_button(label="스캔")
 
-    with col_left:
-        # 1. 실시간 바코드 스캔 영역
-        st.subheader("🔍 실시간 바코드 스캔")
-        with st.form(key="scan_form", clear_on_submit=True):
-            barcode_input = st.text_input("약품 바코드를 스캔하세요:", key="barcode")
-            submit_button = st.form_submit_button(label="스캔")
-
-        if submit_button and barcode_input:
-            std_code, raw_barcode, is_otc = parse_gs1_details(barcode_input)
-            target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == std_code].tolist()
-            
-            if not target_idx:
-                msg = f"❌ [미등록/오입고] 명세서에 없는 품목 (코드: {std_code})"
-                st.session_state.logs.insert(0, ("error", msg))
-            else:
-                idx = target_idx[0]
-                drug_name = st.session_state.order_df.loc[idx, "제품전산출력명"]
+            if submit_button and barcode_input:
+                std_code, raw_barcode, is_otc = parse_gs1_details(barcode_input)
+                target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == std_code].tolist()
                 
-                if is_otc:
-                    st.session_state.order_df.loc[idx, "스캔수량"] += 1
-                    msg = f"✅ [일반약 스캔] {drug_name} (+1)"
-                    st.session_state.logs.insert(0, ("success", msg))
+                if not target_idx:
+                    st.session_state.logs.insert(0, ("error", f"❌ [미등록/오입고] 명세서에 없는 품목 (코드: {std_code})"))
                 else:
-                    if raw_barcode in st.session_state.scanned_serials:
-                        msg = f"🚨 [중복 차단] 이미 검수된 박스입니다!\\n   - {drug_name}"
-                        st.session_state.logs.insert(0, ("error", msg))
-                    else:
-                        st.session_state.scanned_serials.add(raw_barcode)
+                    idx = target_idx[0]
+                    drug_name = st.session_state.order_df.loc[idx, "제품전산출력명"]
+                    if is_otc:
                         st.session_state.order_df.loc[idx, "스캔수량"] += 1
-                        msg = f"🟢 [전문약 스캔] {drug_name} (S/N 확인완료)"
-                        st.session_state.logs.insert(0, ("info", msg))
-                st.rerun()
-
-        st.markdown("---")
-
-        # 2. 📦 대용량/수기 수량 조절 패널 (Enter 키 입력 지원)
-        st.subheader("📦 대용량 번들 / 수기 수량 조절")
-        with st.expander("👉 클릭하여 대량 수량 수기 증감하기", expanded=True):
-            # 품목 선택 드롭다운 (No + 제품명)
-            item_options = {
-                f"[{row['No']}] {row['제품전산출력명']} (현재: {row['스캔수량']}/{row['수량']}개)": row['표준코드']
-                for _, row in st.session_state.order_df.iterrows()
-            }
-            selected_label = st.selectbox("조절할 약품을 선택하세요:", list(item_options.keys()))
-            selected_code = item_options[selected_label]
-            
-            # Form 구조로 변환하여 숫자 입력 후 Enter 키를 누르면 바로 수량이 업데이트되도록 적용
-            with st.form(key="manual_adjust_form", clear_on_submit=False):
-                m_col1, m_col2 = st.columns([1.5, 1])
-                with m_col1:
-                    adjust_qty = st.number_input("증감할 수량 입력 후 Enter:", value=10, step=1)
-                with m_col2:
-                    st.write("") # 간격 맞춤용
-                    st.write("")
-                    apply_btn = st.form_submit_button("수량 반영", use_container_width=True)
-
-                if apply_btn:
-                    target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == selected_code].tolist()[0]
-                    current_qty = st.session_state.order_df.loc[target_idx, "스캔수량"]
-                    new_qty = current_qty + adjust_qty
-                    
-                    if new_qty < 0:
-                        st.error("❌ 스캔 수량은 0개 미만이 될 수 없습니다.")
+                        st.session_state.logs.insert(0, ("success", f"✅ [일반약 스캔] {drug_name} (+1)"))
                     else:
-                        st.session_state.order_df.loc[target_idx, "스캔수량"] = new_qty
-                        drug_name = st.session_state.order_df.loc[target_idx, "제품전산출력명"]
-                        sign = f"+{adjust_qty}" if adjust_qty > 0 else str(adjust_qty)
-                        msg = f"📝 [수기 조절] {drug_name} ({sign}개 조절 ➔ 현재 {new_qty}개)"
-                        st.session_state.logs.insert(0, ("info", msg))
-                        st.rerun()
+                        if raw_barcode in st.session_state.scanned_serials:
+                            st.session_state.logs.insert(0, ("error", f"🚨 [중복 차단] 이미 검수된 박스입니다!\n   - {drug_name}"))
+                        else:
+                            st.session_state.scanned_serials.add(raw_barcode)
+                            st.session_state.order_df.loc[idx, "스캔수량"] += 1
+                            st.session_state.logs.insert(0, ("info", f"🟢 [전문약 스캔] {drug_name} (S/N 확인완료)"))
+                    st.rerun()
 
+            st.markdown("---")
+
+            # 2. 수기 조절 패널
+            st.subheader("📦 수기 수량 조절")
+            with st.expander("👉 클릭하여 대량 수량 수기 증감하기", expanded=False):
+                item_options = {f"[{row['No']}] {row['제품전산출력명']} (현재: {row['스캔수량']}/{row['수량']}개)": row['표준코드'] for _, row in st.session_state.order_df.iterrows()}
+                selected_label = st.selectbox("조절할 약품을 선택하세요:", list(item_options.keys()))
+                
+                with st.form(key="manual_adjust_form", clear_on_submit=False):
+                    m_col1, m_col2 = st.columns([1.5, 1])
+                    with m_col1:
+                        adjust_qty = st.number_input("증감할 수량 입력 후 Enter:", value=10, step=1)
+                    with m_col2:
+                        st.write("")
+                        st.write("")
+                        apply_btn = st.form_submit_button("수량 반영", use_container_width=True)
+
+                    if apply_btn:
+                        selected_code = item_options[selected_label]
+                        target_idx = st.session_state.order_df.index[st.session_state.order_df["표준코드"] == selected_code].tolist()[0]
+                        new_qty = st.session_state.order_df.loc[target_idx, "스캔수량"] + adjust_qty
+                        
+                        if new_qty < 0:
+                            st.error("❌ 수량은 0 미만이 될 수 없습니다.")
+                        else:
+                            st.session_state.order_df.loc[target_idx, "스캔수량"] = new_qty
+                            st.session_state.logs.insert(0, ("info", f"📝 [수기 조절] {st.session_state.order_df.loc[target_idx, '제품전산출력명']} ➔ 현재 {new_qty}개"))
+                            st.rerun()
+
+            st.markdown("---")
+
+            # 3. 엑셀 즉시 다운로드 및 서버 저장 패널 (이메일 제거됨)
+            st.subheader("🏁 검수 완료 및 보고서 저장")
+            with st.expander("검수 결과 엑셀 저장 및 다운로드", expanded=True):
+                excel_bytes = generate_excel_from_view_df(st.session_state.order_df, today_str, provider)
+                # 파일명에 시분초를 추가하여 같은 날 여러번 저장해도 덮어써지지 않게 방지
+                now_time = datetime.datetime.now().strftime("%H%M%S")
+                filename = f"{today_str}_{provider}_검수결과_{now_time}.xlsx"
+
+                c_btn1, c_btn2 = st.columns(2)
+                with c_btn1:
+                    st.download_button(
+                        "📥 내 PC로 즉시 다운로드",
+                        data=excel_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
+                with c_btn2:
+                    if st.button("💾 사내 서버(과거 이력)에 저장", use_container_width=True):
+                        with st.spinner("엑셀 파일을 서버에 저장 중..."):
+                            file_path = os.path.join("history", filename)
+                            with open(file_path, "wb") as f:
+                                f.write(excel_bytes)
+                            st.success("✅ 서버 저장 완료! 상단의 [과거 검수 엑셀 이력] 탭에서 누구나 볼 수 있습니다.")
+
+        with col_right:
+            st.subheader("📋 실시간 대시보드")
+            view_df = st.session_state.order_df[["No", "제품코드", "제품전산출력명", "수량", "스캔수량", "등록여부"]].copy()
+
+            def highlight_status(row):
+                if not row["등록여부"]: return ['background-color: #FFB6C1; color: black;'] * len(row)
+                expected, scanned = row["수량"], row["스캔수량"]
+                if scanned == expected and expected > 0: return ['background-color: #D4EFDF; color: black;'] * len(row)
+                elif scanned > expected: return ['background-color: #FADBD8; color: black;'] * len(row)
+                elif scanned > 0: return ['background-color: #FCF3CF; color: black;'] * len(row)
+                return [''] * len(row)
+
+            styled_df = view_df.style.apply(highlight_status, axis=1).hide(subset=["등록여부"], axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=700)
+
+    else:
+        st.info("👈 좌측에서 명세서 파일을 업로드하시면 검수가 시작됩니다.")
+
+# ----------------- 탭 2: 과거 엑셀 이력 조회 -----------------
+with tab_history:
+    st.header("📁 과거 검수 엑셀 이력 조회")
+    st.markdown("이곳에서 이전에 저장된 모든 검수 결과 엑셀 파일(.xlsx)을 다시 조회하고 다운로드할 수 있습니다.")
+    
+    # history 폴더 내의 파일 목록을 불러옴 (최신순 정렬)
+    history_files = sorted(os.listdir("history"), reverse=True)
+    excel_files = [f for f in history_files if f.endswith('.xlsx')]
+    
+    if not excel_files:
+        st.info("아직 저장된 엑셀 검수 이력이 없습니다. 검수를 진행하고 저장해 주세요.")
+    else:
+        for file in excel_files:
+            file_path = os.path.join("history", file)
+            with open(file_path, "rb") as f:
+                excel_bytes_data = f.read()
+            
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                st.write(f"📊 **{file}**")
+            with c2:
+                st.download_button(
+                    label="엑셀 다운로드",
+                    data=excel_bytes_data,
+                    file_name=file,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=file
+                )
         st.markdown("---")
-
-        # 3. 실시간 로그 표시 (최근 10개)
-        st.subheader("📋 실시간 스캔 및 수기 로그")
-        for log_type, log_msg in st.session_state.logs[:10]:
-            if log_type == "error": st.error(log_msg)
-            elif log_type == "success": st.success(log_msg)
-            else: st.info(log_msg)
-
-    with col_right:
-        st.subheader("📋 [실시간] 입고 검수 대시보드")
-        view_df = st.session_state.order_df[["No", "제품코드", "제품전산출력명", "제품규격", "수량", "스캔수량", "등록여부"]].copy()
-
-        def highlight_status(row):
-            if not row["등록여부"]:
-                return ['background-color: #FFB6C1; color: black;'] * len(row) # 미등록(소프트핑크)
-            expected, scanned = row["수량"], row["스캔수량"]
-            if scanned == expected and expected > 0:
-                return ['background-color: #D4EFDF; color: black;'] * len(row) # 초록 (완료)
-            elif scanned > expected:
-                return ['background-color: #FADBD8; color: black;'] * len(row) # 빨강 (초과)
-            elif scanned > 0:
-                return ['background-color: #FCF3CF; color: black;'] * len(row) # 노랑 (진행)
-            return [''] * len(row)
-
-        styled_df = view_df.style.apply(highlight_status, axis=1).hide(subset=["등록여부"], axis=1)
-        st.dataframe(styled_df, use_container_width=True, height=650)
-
-else:
-    st.info("👈 좌측 사이드바에서 사내 마스터 파일과 명세서 파일을 업로드해주세요.")

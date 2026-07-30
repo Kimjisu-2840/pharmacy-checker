@@ -8,11 +8,11 @@ import os
 # 모듈 임포트
 from parsers.geo_young import GeoYoungParser
 from core.scanner import parse_gs1_details
-from core.report import generate_excel_from_view_df  # 엑셀 엔진 로드
+from core.report import generate_excel_from_view_df  # 엑셀 다운로드 엔진
 
 st.set_page_config(page_title="의약품 검수 시스템", page_icon="💊", layout="wide")
 
-# history 폴더 생성 (과거 내역 저장용)
+# history 폴더 생성 (과거 이력 저장용)
 os.makedirs("history", exist_ok=True)
 
 # ---------------------------------------------------------
@@ -55,21 +55,27 @@ if "order_df" not in st.session_state: st.session_state.order_df = None
 if "logs" not in st.session_state: st.session_state.logs = []
 if "scanned_serials" not in st.session_state: st.session_state.scanned_serials = set()
 
-# 백그라운드 마스터 데이터 자동 로드 (data/master_data.xlsx)
-if not st.session_state.master_db:
-    try:
-        df_m = pd.read_excel("data/master_data.xlsx", usecols="A,C,H,L,Q,AS", dtype={'A': str, 'Q': str})
-        df_m.columns = ["제품코드", "제품전산출력명", "제품규격", "매입처이름", "표준코드", "제약사명"]
-        df_m = df_m.dropna(subset=["표준코드"])
-        df_m["표준코드"] = df_m["표준코드"].astype(str).str.replace('.0', '', regex=False).str.strip().str.zfill(14)
-        st.session_state.master_db = df_m.drop_duplicates(subset=["표준코드"]).set_index("표준코드").to_dict('index')
-    except Exception as e:
-        st.sidebar.error("⚠️ data/master_data.xlsx 파일을 찾을 수 없습니다.")
-
 with st.sidebar:
-    st.header("📁 업무 설정")
-    provider = st.selectbox("1. 제약사/도매처 선택", ["지오영", "추가예정..."])
-    order_file = st.file_uploader("2. 명세서 엑셀 업로드", type=["xlsx", "xls"])
+    st.header("📁 데이터 및 업무 설정")
+    
+    # 1. 사내 마스터 파일 업로드 (원상복구)
+    master_file = st.file_uploader("1. 사내 마스터 엑셀", type=["xlsx", "xls"])
+    if master_file and not st.session_state.master_db:
+        try:
+            df_m = pd.read_excel(master_file, usecols="A,C,H,L,Q,AS", dtype={'A': str, 'Q': str})
+            df_m.columns = ["제품코드", "제품전산출력명", "제품규격", "매입처이름", "표준코드", "제약사명"]
+            df_m = df_m.dropna(subset=["표준코드"])
+            df_m["표준코드"] = df_m["표준코드"].astype(str).str.replace('.0', '', regex=False).str.strip().str.zfill(14)
+            st.session_state.master_db = df_m.drop_duplicates(subset=["표준코드"]).set_index("표준코드").to_dict('index')
+            st.success("마스터 DB 로드 완료")
+        except Exception as e:
+            st.error(f"마스터 로드 실패: {e}")
+
+    # 2. 제약사 선택
+    provider = st.selectbox("2. 제약사/도매처 선택", ["지오영", "추가예정..."])
+    
+    # 3. 명세서 파일 업로드
+    order_file = st.file_uploader("3. 명세서 엑셀", type=["xlsx", "xls"])
     
     if order_file and st.session_state.master_db and st.session_state.order_df is None:
         try:
@@ -179,12 +185,11 @@ with tab_main:
 
             st.markdown("---")
 
-            # 3. 엑셀 즉시 다운로드 및 서버 저장 패널 (이메일 제거됨)
+            # 3. 엑셀 다운로드 및 서버 저장 패널
             st.subheader("🏁 검수 완료 및 보고서 저장")
             with st.expander("검수 결과 엑셀 저장 및 다운로드", expanded=True):
                 excel_bytes = generate_excel_from_view_df(st.session_state.order_df, today_str, provider)
-                # 파일명에 시분초를 추가하여 같은 날 여러번 저장해도 덮어써지지 않게 방지
-                now_time = datetime.datetime.now().strftime("%H%M%S")
+                now_time = datetime.datetime.now().strftime("%H시%M분%S초")
                 filename = f"{today_str}_{provider}_검수결과_{now_time}.xlsx"
 
                 c_btn1, c_btn2 = st.columns(2)
@@ -203,7 +208,7 @@ with tab_main:
                             file_path = os.path.join("history", filename)
                             with open(file_path, "wb") as f:
                                 f.write(excel_bytes)
-                            st.success("✅ 서버 저장 완료! 상단의 [과거 검수 엑셀 이력] 탭에서 누구나 볼 수 있습니다.")
+                            st.success("✅ 서버 저장 완료! 상단의 [과거 검수 엑셀 이력] 탭에서 확인할 수 있습니다.")
 
         with col_right:
             st.subheader("📋 실시간 대시보드")
@@ -221,14 +226,13 @@ with tab_main:
             st.dataframe(styled_df, use_container_width=True, height=700)
 
     else:
-        st.info("👈 좌측에서 명세서 파일을 업로드하시면 검수가 시작됩니다.")
+        st.info("👈 좌측 사이드바에서 사내 마스터 파일과 명세서 파일을 업로드해 주세요.")
 
 # ----------------- 탭 2: 과거 엑셀 이력 조회 -----------------
 with tab_history:
     st.header("📁 과거 검수 엑셀 이력 조회")
     st.markdown("이곳에서 이전에 저장된 모든 검수 결과 엑셀 파일(.xlsx)을 다시 조회하고 다운로드할 수 있습니다.")
     
-    # history 폴더 내의 파일 목록을 불러옴 (최신순 정렬)
     history_files = sorted(os.listdir("history"), reverse=True)
     excel_files = [f for f in history_files if f.endswith('.xlsx')]
     
